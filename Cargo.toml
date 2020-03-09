@@ -1,0 +1,15 @@
+[package]
+name = "conlink"
+description = "Launches a command and provides its output/input over a TCP socket"
+version = "0.1.0"
+authors = ["2xsaiko <git@dblsaiko.net>"]
+edition = "2018"
+
+[profile.release]
+lto = true
+
+[dependencies]
+clap = "2.33.0"
+tokio = { version = "0.2.13", features = ["full"] }
+tokio-util = { version = "0.3.0", features = ["codec"] }
+futures = "0.3.4"
