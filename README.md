@@ -2,7 +2,7 @@
 
 Launches a command and provides its output/input over a TCP socket
 
-netcat or ncat (part of [nmap](https://nmap.org/download.html)) is recommended to connect.
+Connecting to the socket tested with netcat or ncat (part of [nmap](https://nmap.org/download.html)).
 
     USAGE:
         conlink [FLAGS] [OPTIONS] [--] <command>...
