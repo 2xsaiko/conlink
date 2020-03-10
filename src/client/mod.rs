@@ -1,5 +1,6 @@
-use std::fmt::{Display, Error, Formatter};
+use std::fmt::{Display, Formatter};
 use std::fmt;
+use std::io::ErrorKind;
 use std::net::SocketAddr;
 use std::sync::Arc;
 
@@ -17,17 +18,19 @@ use crate::client::term::TermClient;
 pub mod term;
 pub mod net;
 
-pub type Tx = mpsc::UnboundedSender<String>;
+pub type Tx = mpsc::Sender<String>;
 
-pub type Rx = mpsc::UnboundedReceiver<String>;
+pub type Rx = mpsc::Receiver<String>;
 
+/// A client connected to the running program.
+/// In most cases, this is connected through the network.
 pub struct Client {
     state: Arc<Mutex<Shared>>,
     rx: Rx,
     inner: ClientImpl,
 }
 
-pub enum ClientImpl {
+enum ClientImpl {
     Term(TermClient),
     Net(NetClient),
 }
@@ -48,41 +51,47 @@ impl Display for ClientRef {
 }
 
 impl Client {
+    /// Create a new passthrough client connecting the running program to stdout/stdin.
     pub async fn new_term(state: Arc<Mutex<Shared>>) -> Self {
         Client::new(ClientImpl::Term(TermClient::new()), state).await
     }
 
+    /// Create a new client connected to a TCP stream.
     pub async fn new_net(stream: TcpStream, state: Arc<Mutex<Shared>>) -> Self {
         Client::new(ClientImpl::Net(NetClient::new(stream).await), state).await
     }
 
-    pub async fn new(inner: ClientImpl, state: Arc<Mutex<Shared>>) -> Self {
-        // Create a channel for this peer
-        let (tx, rx) = mpsc::unbounded_channel();
+    async fn new(inner: ClientImpl, state: Arc<Mutex<Shared>>) -> Self {
+        let (tx, rx) = mpsc::channel(4096);
 
-        // Add an entry for this `Peer` in the shared state map.
         state.lock().await.clients.insert(inner.get_ref(), tx);
 
         Client { inner, rx, state }
     }
 
-    pub async fn process(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+    /// Start processing the client. This consumes the client after the connection to it has closed.
+    pub async fn process(mut self) -> Result<(), Box<dyn std::error::Error>> {
         while let Some(result) = self.next().await {
             match result {
-                // A message was received from the current user, we should
-                // broadcast this message to the other users.
                 Ok(Message::ToProgram(msg)) => {
                     let mut state = self.state.lock().await;
 
                     state.write_to_stdin(&msg).await;
                 }
-                // A message was received from a peer. Send it to the
-                // current user.
                 Ok(Message::FromProgram(msg)) => {
-                    self.inner.send_line(&msg).await?;
+                    match self.inner.send_line(&msg).await {
+                        Ok(_) => {}
+                        // don't print broken pipe/connection reset errors because those will always
+                        // occur on disconnection before the stream knows it has to close
+                        Err(LinesCodecError::Io(e))
+                        if e.kind() == ErrorKind::BrokenPipe || e.kind() == ErrorKind::ConnectionReset => {}
+                        Err(e) => {
+                            Err(e)?
+                        }
+                    }
                 }
                 Err(e) => {
-                    println!(
+                    eprintln!(
                         "an error occurred while processing messages for {}; error = {:?}",
                         self.inner.get_ref(), e
                     );
@@ -94,29 +103,19 @@ impl Client {
     }
 }
 
-// Peer implements `Stream` in a way that polls both the `Rx`, and `Framed` types.
-// A message is produced whenever an event is ready until the `Framed` stream returns `None`.
 impl Stream for Client {
     type Item = Result<Message, LinesCodecError>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        // First poll the `UnboundedReceiver`.
-
         if let Poll::Ready(Some(v)) = Pin::new(&mut self.rx).poll_next(cx) {
             return Poll::Ready(Some(Ok(Message::FromProgram(v))));
         }
 
-        // Secondly poll the `Framed` stream.
         let result: Option<_> = futures::ready!(Pin::new(&mut self.inner).poll_next(cx));
 
         Poll::Ready(match result {
-            // We've received a message we should broadcast to others.
             Some(Ok(message)) => Some(Ok(Message::ToProgram(message))),
-
-            // An error occurred.
             Some(Err(e)) => Some(Err(e)),
-
-            // The stream has been exhausted.
             None => None,
         })
     }

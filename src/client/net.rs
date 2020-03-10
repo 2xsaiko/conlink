@@ -9,17 +9,22 @@ use tokio_util::codec::{Framed, LinesCodec, LinesCodecError};
 
 pub struct NetClient {
     lines: Framed<TcpStream, LinesCodec>,
+    addr: SocketAddr,
 }
 
 impl NetClient {
     pub async fn new(
         stream: TcpStream,
     ) -> NetClient {
-        NetClient { lines: Framed::new(stream, LinesCodec::new()) }
+        let addr = stream.peer_addr().expect("could not get peer address");
+        NetClient {
+            lines: Framed::new(stream, LinesCodec::new()),
+            addr,
+        }
     }
 
     pub fn get_addr(&self) -> SocketAddr {
-        self.lines.get_ref().peer_addr().expect("could not get peer address")
+        self.addr
     }
 
     pub async fn send_line(&mut self, line: &str) -> Result<(), LinesCodecError> {
@@ -31,9 +36,6 @@ impl Stream for NetClient {
     type Item = Result<String, LinesCodecError>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        // Secondly poll the `Framed` stream.
-        let result: Option<_> = futures::ready!(Pin::new(&mut self.lines).poll_next(cx));
-
-        Poll::Ready(result)
+        Pin::new(&mut self.lines).poll_next(cx)
     }
 }
