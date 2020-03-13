@@ -8,6 +8,8 @@ Connecting to the socket tested with netcat or ncat (part of [nmap](https://nmap
         conlink [FLAGS] [OPTIONS] [--] <command>...
     
     FLAGS:
+        -b, --binary     Enable binary mode
+        -e, --echo       Send input from client to other clients
         -h, --help       Prints help information
         -q, --quiet      Disable passthrough of command output/input to stdout/stdin
         -V, --version    Prints version information
