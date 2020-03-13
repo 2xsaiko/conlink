@@ -26,14 +26,6 @@ pub struct Shared {
 }
 
 impl Shared {
-    /// Create a new shared state.
-    pub fn new(stdin: ChildStdin) -> Self {
-        Shared {
-            clients: HashMap::new(),
-            stdin: FramedWrite::new(stdin, LinesCodec::new()),
-        }
-    }
-
     pub fn clients(&self) -> &HashMap<ClientRef, Tx> { &self.clients }
 
     pub fn clients_mut(&mut self) -> &mut HashMap<ClientRef, Tx> { &mut self.clients }
@@ -42,6 +34,14 @@ impl Shared {
 #[async_trait]
 impl crate::client::Shared for Shared {
     type Data = str;
+
+    /// Create a new shared state.
+    fn new(stdin: ChildStdin) -> Self {
+        Shared {
+            clients: HashMap::new(),
+            stdin: FramedWrite::new(stdin, LinesCodec::new()),
+        }
+    }
 
     /// Send a line of text to the program's input.
     async fn write_to_stdin(&mut self, line: &Self::Data) {

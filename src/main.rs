@@ -1,10 +1,12 @@
 use std::net::IpAddr;
+use std::ops::Deref;
 use std::sync::Arc;
 
 use clap::{crate_authors, crate_description, crate_name, crate_version};
 use clap::app_from_crate;
 use clap::Arg;
 use tokio::net::TcpListener;
+use tokio::process::{Child, ChildStderr, ChildStdout};
 use tokio::stream::StreamExt;
 use tokio::sync::Mutex;
 
@@ -13,7 +15,8 @@ use client::bin::shared::Shared as BinShared;
 use client::str::Client as StrClient;
 use client::str::shared::Shared as StrShared;
 
-use crate::cmd::{BinReadWrapper, StrReadWrapper};
+use crate::client::{Client, Shared};
+use crate::cmd::{BinReadWrapper, ReadWrapper, StrReadWrapper};
 
 mod client;
 mod cmd;
@@ -47,81 +50,57 @@ async fn start(command: &[String], host: IpAddr, port: u16, quiet: bool, binary:
 
     let mut child = cmd::start_command(&command)?;
 
+    if binary {
+        actually_start::<BinShared, BinClient, BinReadWrapper, Vec<u8>>(listener, &mut child, quiet, BinReadWrapper).await
+    } else {
+        actually_start::<StrShared, StrClient, StrReadWrapper, String>(listener, &mut child, quiet, StrReadWrapper).await
+    }
+
+    Ok(child.await?.code().unwrap_or(126))
+}
+
+async fn actually_start<S, C, W, D>(mut listener: TcpListener, child: &mut Child, quiet: bool, wrapper: W)
+    where S: Shared<Data=<D as Deref>::Target> + Send + 'static,
+          C: Client<S> + Send,
+          W: ReadWrapper<ChildStdout, Data=D> + ReadWrapper<ChildStderr, Data=D> + Copy + 'static,
+          D: Deref + Send + Sync,
+          <D as Deref>::Target: Sync {
     let stdin = child.stdin.take().unwrap();
     let stdout = child.stdout.take().unwrap();
     let stderr = child.stderr.take().unwrap();
 
-    if binary {
-        let state = Arc::new(Mutex::new(BinShared::new(stdin)));
+    let state = Arc::new(Mutex::new(S::new(stdin)));
 
-        cmd::process_stdout(stdout, state.clone(), BinReadWrapper);
-        cmd::process_stdout(stderr, state.clone(), BinReadWrapper);
+    cmd::process_stdout(stdout, state.clone(), wrapper);
+    cmd::process_stdout(stderr, state.clone(), wrapper);
 
-        if !quiet {
-            let state = state.clone();
-            tokio::spawn(async move {
-                let client = BinClient::new_term(state.clone()).await;
-                if let Err(e) = client.process().await {
-                    eprintln!("error while processing terminal client: {:?}", e);
-                }
-            });
-        }
-
-        {
-            let state = state.clone();
-            tokio::spawn(async move {
-                while let Some(stream) = listener.next().await {
-                    match stream {
-                        Ok(stream) => {
-                            let state = state.clone();
-                            tokio::spawn(async move {
-                                let client = BinClient::new_net(stream, state).await;
-                                if let Err(e) = client.process().await {
-                                    eprintln!("error while processing network client: {:?}", e);
-                                }
-                            });
-                        }
-                        Err(e) => eprintln!("failed to accept connection: {:?}", e),
-                    }
-                }
-            });
-        }
-    } else {
-        let state = Arc::new(Mutex::new(StrShared::new(stdin)));
-
-        cmd::process_stdout(stdout, state.clone(), StrReadWrapper);
-        cmd::process_stdout(stderr, state.clone(), StrReadWrapper);
-
-        if !quiet {
-            let state = state.clone();
-            tokio::spawn(async move {
-                let client = StrClient::new_term(state.clone()).await;
-                if let Err(e) = client.process().await {
-                    eprintln!("error while processing terminal client: {:?}", e);
-                }
-            });
-        }
-
-        {
-            let state = state.clone();
-            tokio::spawn(async move {
-                while let Some(stream) = listener.next().await {
-                    match stream {
-                        Ok(stream) => {
-                            let state = state.clone();
-                            tokio::spawn(async move {
-                                let client = StrClient::new_net(stream, state).await;
-                                if let Err(e) = client.process().await {
-                                    eprintln!("error while processing network client: {:?}", e);
-                                }
-                            });
-                        }
-                        Err(e) => eprintln!("failed to accept connection: {:?}", e),
-                    }
-                }
-            });
-        }
+    if !quiet {
+        let state = state.clone();
+        tokio::spawn(async move {
+            let client = C::new_term(state.clone()).await;
+            if let Err(e) = client.process().await {
+                eprintln!("error while processing terminal client: {:?}", e);
+            }
+        });
     }
 
-    Ok(child.await?.code().unwrap_or(126))
+    {
+        let state = state.clone();
+        tokio::spawn(async move {
+            while let Some(stream) = listener.next().await {
+                match stream {
+                    Ok(stream) => {
+                        let state = state.clone();
+                        tokio::spawn(async move {
+                            let client = C::new_net(stream, state).await;
+                            if let Err(e) = client.process().await {
+                                eprintln!("error while processing network client: {:?}", e);
+                            }
+                        });
+                    }
+                    Err(e) => eprintln!("failed to accept connection: {:?}", e),
+                }
+            }
+        });
+    }
 }

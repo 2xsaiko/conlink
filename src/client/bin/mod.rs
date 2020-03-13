@@ -9,11 +9,12 @@ use tokio::prelude::AsyncRead;
 use tokio::stream::{Stream, StreamExt};
 use tokio::sync::{mpsc, Mutex};
 
+use async_trait::async_trait;
 use net::NetClient;
 use shared::{Message, Shared};
 use term::TermClient;
 
-use crate::client::{ClientRef, Shared as _};
+use crate::client::{ClientRef, Shared as _Shared};
 
 pub mod net;
 pub mod term;
@@ -37,16 +38,6 @@ enum ClientImpl {
 }
 
 impl Client {
-    /// Create a new passthrough client connecting the running program to stdout/stdin.
-    pub async fn new_term(state: Arc<Mutex<Shared>>) -> Self {
-        Client::new(ClientImpl::Term(TermClient::new()), state).await
-    }
-
-    /// Create a new client connected to a TCP stream.
-    pub async fn new_net(stream: TcpStream, state: Arc<Mutex<Shared>>) -> Self {
-        Client::new(ClientImpl::Net(NetClient::new(stream).await), state).await
-    }
-
     async fn new(inner: ClientImpl, state: Arc<Mutex<Shared>>) -> Self {
         let (tx, rx) = mpsc::channel(4096);
 
@@ -54,9 +45,22 @@ impl Client {
 
         Client { inner, rx, state }
     }
+}
+
+#[async_trait]
+impl crate::Client<Shared> for Client {
+    /// Create a new passthrough client connecting the running program to stdout/stdin.
+    async fn new_term(state: Arc<Mutex<Shared>>) -> Self {
+        Client::new(ClientImpl::Term(TermClient::new()), state).await
+    }
+
+    /// Create a new client connected to a TCP stream.
+    async fn new_net(stream: TcpStream, state: Arc<Mutex<Shared>>) -> Self {
+        Client::new(ClientImpl::Net(NetClient::new(stream).await), state).await
+    }
 
     /// Start processing the client. This consumes the client after the connection to it has closed.
-    pub async fn process(mut self) -> Result<(), Box<dyn std::error::Error>> {
+    async fn process(mut self) -> Result<(), Box<dyn std::error::Error>> {
         while let Some(result) = self.next().await {
             match result {
                 Ok(Message::ToProgram(msg)) => {

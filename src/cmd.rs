@@ -59,6 +59,7 @@ pub trait ReadWrapper<T>: Send + Sync
     async fn read(&self, reader: &mut Self::Reader) -> Option<Result<Self::Data, Self::Error>>;
 }
 
+#[derive(Copy, Clone)]
 pub struct StrReadWrapper;
 
 #[async_trait]
@@ -81,6 +82,7 @@ impl<T> ReadWrapper<T> for StrReadWrapper
     }
 }
 
+#[derive(Copy, Clone)]
 pub struct BinReadWrapper;
 
 #[async_trait]

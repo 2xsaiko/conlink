@@ -4,6 +4,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 
 use tokio::net::TcpStream;
+use tokio::process::ChildStdin;
 use tokio::sync::{mpsc, Mutex};
 
 use async_trait::async_trait;
@@ -36,11 +37,15 @@ pub trait Client<S> where S: Shared {
     async fn new_term(state: Arc<Mutex<S>>) -> Self;
 
     async fn new_net(stream: TcpStream, state: Arc<Mutex<S>>) -> Self;
+
+    async fn process(self) -> Result<(), Box<dyn std::error::Error>>;
 }
 
 #[async_trait]
 pub trait Shared {
     type Data: ?Sized;
+
+    fn new(stdin: ChildStdin) -> Self;
 
     /// Send a line of text to the program's input.
     async fn write_to_stdin(&mut self, line: &Self::Data);
