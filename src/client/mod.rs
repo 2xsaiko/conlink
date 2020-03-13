@@ -17,7 +17,7 @@ pub type Tx<T> = mpsc::Sender<T>;
 
 pub type Rx<T> = mpsc::Receiver<T>;
 
-#[derive(Debug, Hash, Eq, PartialEq)]
+#[derive(Debug, Hash, Eq, PartialEq, Copy, Clone)]
 pub enum ClientRef {
     Term,
     Net(SocketAddr),
@@ -45,11 +45,20 @@ pub trait Client<S> where S: Shared {
 pub trait Shared {
     type Data: ?Sized;
 
-    fn new(stdin: ChildStdin) -> Self;
+    fn new(stdin: ChildStdin, echo: bool) -> Self;
 
     /// Send a line of text to the program's input.
-    async fn write_to_stdin(&mut self, line: &Self::Data);
+    async fn write_to_stdin(&mut self, line: &Self::Data, from: ClientRef);
 
     /// Send a line of text to all connected clients.
     async fn write_output(&mut self, line: &Self::Data);
+}
+
+#[derive(Debug)]
+pub enum Message<T> {
+    /// A message containing a line of text to be sent to the program.
+    ToProgram(T),
+
+    /// A message containing a line of text to be send to connected clients.
+    FromProgram(T),
 }

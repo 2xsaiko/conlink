@@ -1,10 +1,8 @@
-use std::error::Error;
 use std::fmt::Debug;
 use std::ops::Deref;
 use std::process::Stdio;
 use std::sync::Arc;
 
-use tokio::io::{AsyncReadExt, ErrorKind};
 use tokio::prelude::*;
 use tokio::process::{Child, Command};
 use tokio::stream::StreamExt;

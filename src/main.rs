@@ -32,6 +32,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .arg(Arg::with_name("host").short("H").long("host").default_value("0.0.0.0").help("The host to bind the socket to"))
         .arg(Arg::with_name("quiet").short("q").long("quiet").help("Disable passthrough of command output/input to stdout/stdin"))
         .arg(Arg::with_name("binary").short("b").long("binary").help("Enable binary mode"))
+        .arg(Arg::with_name("echo").short("e").long("echo").help("Send input from client to other clients"))
         .arg(Arg::with_name("command").last(true).required(true).multiple(true).help("The command to run"))
         .get_matches();
 
@@ -39,27 +40,28 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let host: IpAddr = matches.value_of("host").unwrap().parse().expect("invalid target IP address");
     let quiet = matches.is_present("quiet");
     let binary = matches.is_present("binary");
+    let echo = matches.is_present("echo");
     let command = matches.values_of_lossy("command").unwrap();
 
     // TODO: find a way to cleanly exit?
-    std::process::exit(start(&command, host, port, quiet, binary).await?)
+    std::process::exit(start(&command, host, port, quiet, binary, echo).await?)
 }
 
-async fn start(command: &[String], host: IpAddr, port: u16, quiet: bool, binary: bool) -> Result<i32, Box<dyn std::error::Error>> {
-    let mut listener = TcpListener::bind((host, port)).await?;
+async fn start(command: &[String], host: IpAddr, port: u16, quiet: bool, binary: bool, echo: bool) -> Result<i32, Box<dyn std::error::Error>> {
+    let listener = TcpListener::bind((host, port)).await?;
 
     let mut child = cmd::start_command(&command)?;
 
     if binary {
-        actually_start::<BinShared, BinClient, BinReadWrapper, Vec<u8>>(listener, &mut child, quiet, BinReadWrapper).await
+        actually_start::<BinShared, BinClient, BinReadWrapper, Vec<u8>>(listener, &mut child, quiet, echo, BinReadWrapper).await
     } else {
-        actually_start::<StrShared, StrClient, StrReadWrapper, String>(listener, &mut child, quiet, StrReadWrapper).await
+        actually_start::<StrShared, StrClient, StrReadWrapper, String>(listener, &mut child, quiet, echo, StrReadWrapper).await
     }
 
     Ok(child.await?.code().unwrap_or(126))
 }
 
-async fn actually_start<S, C, W, D>(mut listener: TcpListener, child: &mut Child, quiet: bool, wrapper: W)
+async fn actually_start<S, C, W, D>(mut listener: TcpListener, child: &mut Child, quiet: bool, echo: bool, wrapper: W)
     where S: Shared<Data=<D as Deref>::Target> + Send + 'static,
           C: Client<S> + Send,
           W: ReadWrapper<ChildStdout, Data=D> + ReadWrapper<ChildStderr, Data=D> + Copy + 'static,
@@ -69,7 +71,7 @@ async fn actually_start<S, C, W, D>(mut listener: TcpListener, child: &mut Child
     let stdout = child.stdout.take().unwrap();
     let stderr = child.stderr.take().unwrap();
 
-    let state = Arc::new(Mutex::new(S::new(stdin)));
+    let state = Arc::new(Mutex::new(S::new(stdin, echo)));
 
     cmd::process_stdout(stdout, state.clone(), wrapper);
     cmd::process_stdout(stderr, state.clone(), wrapper);

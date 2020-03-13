@@ -10,10 +10,10 @@ use tokio_util::codec::LinesCodecError;
 
 use async_trait::async_trait;
 use net::NetClient;
-use shared::{Message, Shared};
+use shared::Shared;
 use term::TermClient;
 
-use crate::client::{ClientRef, Shared as _Shared};
+use crate::client::{ClientRef, Message, Shared as _Shared};
 
 pub mod net;
 pub mod term;
@@ -65,7 +65,7 @@ impl crate::Client<Shared> for Client {
                 Ok(Message::ToProgram(msg)) => {
                     let mut state = self.state.lock().await;
 
-                    state.write_to_stdin(&msg).await;
+                    state.write_to_stdin(&msg, self.inner.get_ref()).await;
                 }
                 Ok(Message::FromProgram(msg)) => {
                     match self.inner.send_line(&msg).await {
@@ -74,9 +74,7 @@ impl crate::Client<Shared> for Client {
                         // occur on disconnection before the stream knows it has to close
                         Err(LinesCodecError::Io(e))
                         if e.kind() == ErrorKind::BrokenPipe || e.kind() == ErrorKind::ConnectionReset => {}
-                        Err(e) => {
-                            Err(e)?
-                        }
+                        Err(e) => Err(e)?,
                     }
                 }
                 Err(e) => {
@@ -93,7 +91,7 @@ impl crate::Client<Shared> for Client {
 }
 
 impl Stream for Client {
-    type Item = Result<Message, LinesCodecError>;
+    type Item = Result<Message<String>, LinesCodecError>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         if let Poll::Ready(Some(v)) = Pin::new(&mut self.rx).poll_next(cx) {
@@ -131,7 +129,7 @@ impl ClientImpl {
 
     async fn send_line(&mut self, line: &str) -> Result<(), LinesCodecError> {
         match self {
-            ClientImpl::Term(c) => Ok(c.send_line(line)),
+            ClientImpl::Term(c) => c.send_line(line).await,
             ClientImpl::Net(c) => c.send_line(line).await,
         }
     }

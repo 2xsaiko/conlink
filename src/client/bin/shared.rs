@@ -9,19 +9,11 @@ use crate::client::ClientRef;
 
 use super::Tx;
 
-#[derive(Debug)]
-pub enum Message {
-    /// A message containing a line of text to be sent to the program.
-    ToProgram(Vec<u8>),
-
-    /// A message containing a line of text to be send to connected clients.
-    FromProgram(Vec<u8>),
-}
-
 /// The state shared between all tasks.
 pub struct Shared {
     clients: HashMap<ClientRef, Tx>,
     stdin: ChildStdin,
+    echo: bool,
 }
 
 impl Shared {
@@ -35,17 +27,26 @@ impl crate::client::Shared for Shared {
     type Data = [u8];
 
     /// Create a new shared state.
-    fn new(stdin: ChildStdin) -> Self {
+    fn new(stdin: ChildStdin, echo: bool) -> Self {
         Shared {
             clients: HashMap::new(),
             stdin,
+            echo,
         }
     }
 
     /// Send a buffer to the program's input.
-    async fn write_to_stdin(&mut self, line: &Self::Data) {
+    async fn write_to_stdin(&mut self, line: &Self::Data, from: ClientRef) {
         match self.stdin.write_all(line).await {
-            Ok(_) => {}
+            Ok(_) => {
+                if self.echo {
+                    for (&r, stream) in self.clients.iter_mut() {
+                        if r != from {
+                            let _ = stream.send(line.to_owned()).await;
+                        }
+                    }
+                }
+            }
             Err(e) => {
                 eprintln!("failed to pass to program: {:?}", e);
             }

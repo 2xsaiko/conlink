@@ -1,22 +1,25 @@
+use futures::SinkExt;
 use futures::task::Context;
-use tokio::io::Stdin;
+use tokio::io::{Stdin, Stdout};
 use tokio::macros::support::{Pin, Poll};
 use tokio::stream::Stream;
-use tokio_util::codec::{FramedRead, LinesCodec, LinesCodecError};
+use tokio_util::codec::{FramedRead, FramedWrite, LinesCodec, LinesCodecError};
 
 pub struct TermClient {
     stdin: FramedRead<Stdin, LinesCodec>,
+    stdout: FramedWrite<Stdout, LinesCodec>,
 }
 
 impl TermClient {
     pub fn new() -> Self {
         TermClient {
             stdin: FramedRead::new(tokio::io::stdin(), LinesCodec::new()),
+            stdout: FramedWrite::new(tokio::io::stdout(), LinesCodec::new()),
         }
     }
 
-    pub fn send_line(&mut self, line: &str) {
-        println!("{}", line)
+    pub async fn send_line(&mut self, line: &str) -> Result<(), LinesCodecError> {
+        self.stdout.send(line).await
     }
 }
 
